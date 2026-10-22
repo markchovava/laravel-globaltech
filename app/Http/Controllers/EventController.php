@@ -40,7 +40,7 @@ class EventController extends Controller
         return EventResource::collection($data);
     }
 
-    public function view($id)
+    public function view(string|int $id)
     {
         $data = Event::with(['user', 'galleries'])->findOrFail($id);
         return new EventResource($data);
@@ -69,7 +69,7 @@ class EventController extends Controller
     public function update(Request $request, $id)
     {
         $data = Event::findOrFail($id);
-        $data->userIdd = Auth::id();
+        $data->userId = Auth::id();
         $data->name = $request->input('name');
         $data->desc = $request->input('desc');
         $data->venue = $request->input('venue');

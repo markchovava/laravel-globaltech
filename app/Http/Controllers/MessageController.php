@@ -73,13 +73,13 @@ class MessageController extends Controller
         ]);
 
         $appInfo = AppInfo::first();
-        if (!$appInfo) {
+        if (!$appInfo && !$appInfo->email) {
             return response()->json([
                 'message' => "You can't send message at the moment, kindly contact Admin.",
                 'status' => 0,
             ]);
         }
-        $emails = [env('ADMIN_EMAIL'), $appInfo->email];
+        $emails = [env('ADMIN_EMAIL'), env('ADMIN_EMAIL2')];
         Mail::to($emails)->send(new MessageMail($data, $appInfo));
 
         return response()->json([

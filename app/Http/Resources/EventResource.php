@@ -26,6 +26,7 @@ class EventResource extends JsonResource
             'updatedAt' => $this->updated_at,
             'createdAt' => $this->created_at,
             'user' => new UserResource($this->whenLoaded('user')),
+            'galleries' => GalleryResource::collection($this->whenLoaded('galleries')),
         ];
     }
 }

@@ -7,25 +7,32 @@ use App\Models\Event;
 use App\Models\Gallery;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Throwable;
 
 class GalleryController extends Controller
 {
     /*
-    images are stored in a file location, and the record of it is
-    stored in the database, so when deleting an image, we need to
-    delete it from both the file location and the database
+    Images are stored in a file location, and the record of it is
+    stored in the database, so when deleting an image we delete it
+    from both the file location and the database.
 
-    images are stored in the Laravel project's public folder:
-    /public/images/gallery
-    The `image` column holds the path relative to public/,
-    e.g. "images/gallery/abc123.jpg"
+    Images are written straight into the folder the website is served from
+    (public_html/globaltech, the folder with index.php).
+
+    Files land in public_html/globaltech/storage/images/gallery/
+    The `image` column holds the path relative to the web root,
+    e.g. "storage/images/gallery/20261022_ab12cd34.jpg"
+
+    Public URL: https://www.globaltech.co.zw/ + the `image` value
     */
 
-    private const DIR = 'images/gallery';
+    private const UPLOAD_PATH = 'storage/images/gallery/';
+    private const SERVED_ROOT = '/home/u713967972/domains/fldesigners.co.zw/public_html/globaltech/';
+    private const SAFE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 
     public function index()
     {
@@ -46,7 +53,7 @@ class GalleryController extends Controller
     public function indexByEvent(Event|int|string $id)
     {
         $data = Gallery::with(['user', 'event'])
-            ->where('event_id', $id)
+            ->where('eventId', $id)
             ->orderBy('updated_at', 'desc')
             ->get();
         return GalleryResource::collection($data);
@@ -65,19 +72,15 @@ class GalleryController extends Controller
      */
     public function store(Request $request)
     {
-        $ids = $this->saveImages(
+        $this->saveImages(
             $request->file('images', []),
             $request->input('eventId'),
-            $request->user()->id
+            Auth::id(),
         );
-        $data = Gallery::with(['user', 'event'])
-            ->orderB('created_at', 'desc')
-            ->paginate(20);
 
         return response()->json([
-            'data' => GalleryResource::collection($data),
             'message' => 'Gallery saved successfully.',
-            'status' => 1,
+            'status'  => 1,
         ]);
     }
 
@@ -113,7 +116,7 @@ class GalleryController extends Controller
 
         // 2. Add the new images
         if (!empty($newFiles)) {
-            $this->saveImages($newFiles, $event->id, $request->user()->id);
+            $this->saveImages($newFiles, $event->id, Auth::id());
         }
 
         return GalleryResource::collection(
@@ -135,11 +138,14 @@ class GalleryController extends Controller
         $gallery->delete();
         $this->deleteFile($path);
 
-        return response()->json(['message' => 'Image deleted successfully']);
+        return response()->json([
+            'status' => 1,
+            'message' => 'Image deleted successfully'
+        ]);
     }
 
     /**
-     * Move files into public/images/gallery and create DB rows.
+     * Move files into the served folder and create DB rows.
      * If anything fails, files written in this call are removed so no
      * orphans are left behind.
      *
@@ -147,26 +153,24 @@ class GalleryController extends Controller
      */
     private function saveImages(array $files, int|string $eventId, int|string $userId): array
     {
-        $absoluteDir = public_path(self::DIR);
-        File::ensureDirectoryExists($absoluteDir);
-
         $storedPaths = [];
 
         try {
-            return DB::transaction(function () use ($files, $eventId, $userId, $absoluteDir, &$storedPaths) {
+            return DB::transaction(function () use ($files, $eventId, $userId, &$storedPaths) {
                 $ids = [];
 
                 foreach ($files as $file) {
-                    $filename = Str::uuid() . '.' . $file->getClientOriginalExtension();
-                    $file->move($absoluteDir, $filename);
+                    if (!($file instanceof UploadedFile) || !$file->isValid()) {
+                        continue;
+                    }
 
-                    $relativePath = self::DIR . '/' . $filename;
+                    $relativePath = $this->moveFile($file);
                     $storedPaths[] = $relativePath;
 
                     $ids[] = Gallery::create([
                         'eventId' => $eventId,
-                        'userId' => $userId,
-                        'image' => $relativePath,
+                        'userId'  => $userId,
+                        'image'   => $relativePath,
                     ])->id;
                 }
 
@@ -180,16 +184,40 @@ class GalleryController extends Controller
         }
     }
 
+    /**
+     * Moves one upload into the served folder and returns the relative path
+     * (e.g. "storage/images/gallery/20261022_ab12cd34.jpg").
+     */
+    private function moveFile(UploadedFile $file): string
+    {
+        // never write an executable extension into a public folder
+        $ext = strtolower($file->getClientOriginalExtension());
+        $ext = in_array($ext, self::SAFE_EXT, true) ? $ext : 'jpg';
+
+        $name = date('Ymd') . '_' . Str::random(8) . '.' . $ext;
+
+        $uploadPath = self::SERVED_ROOT . self::UPLOAD_PATH;
+
+        if (!file_exists($uploadPath)) {
+            mkdir($uploadPath, 0755, true);
+        }
+
+        $file->move($uploadPath, $name);
+
+        return self::UPLOAD_PATH . $name;
+    }
+
     private function deleteFile(?string $relativePath): void
     {
-        if (!$relativePath) {
+        // only ever delete inside our own image folder
+        if (!$relativePath || !str_starts_with($relativePath, self::UPLOAD_PATH)) {
             return;
         }
 
-        $absolute = public_path($relativePath);
+        $absolute = self::SERVED_ROOT . $relativePath;
 
-        if (File::exists($absolute)) {
-            File::delete($absolute);
+        if (file_exists($absolute)) {
+            unlink($absolute);
         }
     }
 }

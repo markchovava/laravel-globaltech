@@ -55,6 +55,7 @@ Route::post('/inquiry-status/{id}', [InquiryController::class, 'updateStatus']);
 Route::get('/inquiry-search', [InquiryController::class, 'search']);
 Route::prefix('inquiry')->group(function () {
     Route::get('/', [InquiryController::class, 'index']);
+    Route::post('/', [InquiryController::class, 'store']);
     Route::get('/{id}', [InquiryController::class, 'view']);
 });
 

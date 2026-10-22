@@ -3,10 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\InquiryResource;
+use App\Mail\InquiryMail;
+use App\Models\AppInfo;
 use App\Models\Inquiry;
 use App\Models\Service;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Mail;
 
 class InquiryController extends Controller
 {
@@ -76,15 +79,22 @@ class InquiryController extends Controller
     {
         $data = $request->only(self::FIELDS);
 
-        // userId comes from the session, never from the request body
-        $data['userId'] = $request->user()?->id;
-
         // fill in the service name from the service if it wasn't sent
         if (!empty($data['serviceId']) && empty($data['serviceName'])) {
             $data['serviceName'] = Service::find($data['serviceId'])?->name;
         }
 
         $inquiry = Inquiry::create($data);
+
+        $appInfo = AppInfo::first();
+        if (!$appInfo || !$appInfo->email) {
+            return response()->json([
+                'message' => "You can't send message at the moment, kindly contact Admin.",
+                'status' => 0,
+            ]);
+        }
+        $emails = [env('ADMIN_EMAIL'), env('ADMIN_EMAIL2')];
+        Mail::to($emails)->send(new InquiryMail($inquiry, $appInfo));
 
         return response()->json([
             'data' => new InquiryResource($inquiry),

@@ -8,20 +8,24 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
 class ServiceController extends Controller
 {
     /*
-    each service has one image, stored in public/storage/images/service.
-    The `image` column holds the path relative to public/,
-    e.g. "storage/images/service/abc123.jpg"
+    Images are written straight into the folder the website is served from
+    (public_html/globaltech, the folder with index.php), same approach as CarController.
+
+    Files land in public_html/globaltech/storage/images/services/
+    The `image` column holds the path relative to the web root,
+    e.g. "storage/images/services/20261022_ab12c.jpg"
+
+    Public URL: https://www.globaltech.co.zw/ + the `image` value
     */
 
-    private const DIR = 'storage/images/service';
+    private const UPLOAD_PATH = 'storage/images/services/';
+    private const SERVED_ROOT = '/home/u713967972/domains/fldesigners.co.zw/public_html/globaltech/';
     private const SAFE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 
     public function index()
@@ -51,7 +55,9 @@ class ServiceController extends Controller
     public function indexAll()
     {
         return ServiceResource::collection(
-            Service::with(['user'])->orderBy('updated_at', 'desc')->get()
+            Service::with(['user'])
+                ->orderBy('priority', 'asc')
+                ->orderBy('updated_at', 'desc')->get()
         );
     }
 
@@ -65,7 +71,6 @@ class ServiceController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $userId = Auth::id() ?? null;
         $newImage = $request->hasFile('image')
             ? $this->saveImage($request->file('image'))
             : null;
@@ -74,8 +79,8 @@ class ServiceController extends Controller
             $service = new Service();
             $service->forceFill([
                 ...$request->only(['name', 'desc', 'priority']),
-                'image' => $newImage ?? '',
-                'userId' => $userId,
+                'image'  => $newImage ?? '',
+                'userId' => Auth::id(),
             ])->save();
         } catch (Throwable $e) {
             $this->deleteFile($newImage); // no orphaned file if the insert fails
@@ -113,9 +118,7 @@ class ServiceController extends Controller
             $service->forceFill($data)->save();
         } catch (Throwable $e) {
             // roll back the freshly uploaded file if the DB write failed
-            if ($newImage) {
-                $this->deleteFile($newImage);
-            }
+            $this->deleteFile($newImage);
             throw $e;
         }
 
@@ -145,32 +148,40 @@ class ServiceController extends Controller
         ]);
     }
 
+    /**
+     * Moves the upload into the served folder and returns the relative path
+     * (e.g. "storage/images/services/20261022_ab12c.jpg") to store in the database.
+     */
     private function saveImage(UploadedFile $file): string
     {
-        $absoluteDir = public_path(self::DIR);
-        File::ensureDirectoryExists($absoluteDir);
+        // never write an executable extension into a public folder
+        $ext = strtolower($file->getClientOriginalExtension());
+        $ext = in_array($ext, self::SAFE_EXT, true) ? $ext : 'jpg';
 
-        // never write an executable extension into public/
-        $ext = strtolower($file->extension() ?: '');
-        $ext = in_array($ext, self::SAFE_EXT, true) ? $ext : 'bin';
+        $name = date('Ymd') . '_' . Str::random(5) . '.' . $ext;
 
-        $filename = Str::uuid() . '.' . $ext;
-        $file->move($absoluteDir, $filename);
+        $uploadPath = self::SERVED_ROOT . self::UPLOAD_PATH;
 
-        return self::DIR . '/' . $filename;
+        if (!file_exists($uploadPath)) {
+            mkdir($uploadPath, 0755, true);
+        }
+
+        $file->move($uploadPath, $name);
+
+        return self::UPLOAD_PATH . $name;
     }
 
     private function deleteFile(?string $relativePath): void
     {
         // only ever delete inside our own image folder
-        if (!$relativePath || !str_starts_with($relativePath, self::DIR . '/')) {
+        if (!$relativePath || !str_starts_with($relativePath, self::UPLOAD_PATH)) {
             return;
         }
 
-        $absolute = public_path($relativePath);
+        $absolute = self::SERVED_ROOT . $relativePath;
 
-        if (File::exists($absolute)) {
-            File::delete($absolute);
+        if (file_exists($absolute)) {
+            unlink($absolute);
         }
     }
 }
