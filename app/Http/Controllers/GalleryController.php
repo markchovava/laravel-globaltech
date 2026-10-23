@@ -16,10 +16,6 @@ use Throwable;
 class GalleryController extends Controller
 {
     /*
-    Images are stored in a file location, and the record of it is
-    stored in the database, so when deleting an image we delete it
-    from both the file location and the database.
-
     Images are written straight into the folder the website is served from
     (public_html/globaltech, the folder with index.php).
 
@@ -38,7 +34,7 @@ class GalleryController extends Controller
     {
         $data = Gallery::with(['user', 'event'])
             ->orderBy('updated_at', 'desc')
-            ->paginate(20);
+            ->paginate(15);
         return GalleryResource::collection($data);
     }
 
@@ -68,13 +64,13 @@ class GalleryController extends Controller
 
     /**
      * Add multiple images from a Next.js app.
-     * Expects multipart/form-data: eventId, images[] (files)
+     * Expects multipart/form-data: eventId (may be empty), images[] (files)
      */
     public function store(Request $request)
     {
         $this->saveImages(
             $request->file('images', []),
-            $request->input('eventId'),
+            $request->input('eventId') ?? null,
             Auth::id(),
         );
 
@@ -87,9 +83,7 @@ class GalleryController extends Controller
     /**
      * Delete the images listed in deleteIds, then add any new images.
      * $id is the event whose gallery is being updated.
-     * Expects multipart/form-data: deleteIds[] (optional), images[] (optional)
-     * Send as POST with `_method=PUT` from Next.js, because PHP does not
-     * parse multipart bodies on real PUT/PATCH requests.
+     * Send as POST with `_method=PUT` from Next.js.
      */
     public function update(Request $request, int|string $id)
     {
@@ -98,7 +92,6 @@ class GalleryController extends Controller
         $deleteIds = (array) $request->input('deleteIds', []);
         $newFiles = $request->file('images', []);
 
-        // 1. Delete the requested images (scoped to this event only)
         if (!empty($deleteIds)) {
             $toDelete = Gallery::where('eventId', $event->id)
                 ->whereIn('id', $deleteIds)
@@ -108,13 +101,11 @@ class GalleryController extends Controller
                 Gallery::whereIn('id', $toDelete->pluck('id'))->delete();
             });
 
-            // Remove files only after the DB rows are gone
             foreach ($toDelete as $gallery) {
                 $this->deleteFile($gallery->image);
             }
         }
 
-        // 2. Add the new images
         if (!empty($newFiles)) {
             $this->saveImages($newFiles, $event->id, Auth::id());
         }
@@ -145,13 +136,23 @@ class GalleryController extends Controller
     }
 
     /**
+     * Laravel's ConvertEmptyStringsToNull middleware turns '' into null.
+     * The frontend sends '' when no event is chosen, so turn null back
+     * into '' and store it as an empty string.
+     */
+    private function normalizeEventId(mixed $eventId): string
+    {
+        return $eventId === null ? '' : (string) $eventId;
+    }
+
+    /**
      * Move files into the served folder and create DB rows.
      * If anything fails, files written in this call are removed so no
      * orphans are left behind.
      *
      * @return array<int> ids of created Gallery records
      */
-    private function saveImages(array $files, int|string $eventId, int|string $userId): array
+    private function saveImages(array $files, int|string $eventId = null, int|string|null $userId): array
     {
         $storedPaths = [];
 
@@ -168,7 +169,7 @@ class GalleryController extends Controller
                     $storedPaths[] = $relativePath;
 
                     $ids[] = Gallery::create([
-                        'eventId' => $eventId,
+                        'eventId' => $eventId,   // '' when no event
                         'userId'  => $userId,
                         'image'   => $relativePath,
                     ])->id;
@@ -185,8 +186,7 @@ class GalleryController extends Controller
     }
 
     /**
-     * Moves one upload into the served folder and returns the relative path
-     * (e.g. "storage/images/gallery/20261022_ab12cd34.jpg").
+     * Moves one upload into the served folder and returns the relative path.
      */
     private function moveFile(UploadedFile $file): string
     {

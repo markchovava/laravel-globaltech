@@ -25,6 +25,7 @@
             <div style="padding: 32px 40px;">
 
                 {{-- Service Field --}}
+                @if (!empty($inquiry->serviceName))
                 <div style="margin-bottom: 24px;">
                     <p style="margin: 0 0 4px; font-size: 11px; font-weight: 600; color: #1d4ed8; letter-spacing: 1.5px; text-transform: uppercase;">
                         Service</p>
@@ -32,6 +33,7 @@
                         {{ $inquiry->serviceName }}
                     </p>
                 </div>
+                @endif
 
                 {{-- Status Field --}}
                 @if (!empty($inquiry->status))

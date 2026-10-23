@@ -8,9 +8,9 @@ use App\Models\AppInfo;
 use App\Models\Message;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-
-
+use Throwable;
 
 class MessageController extends Controller
 {
@@ -64,6 +64,15 @@ class MessageController extends Controller
 
     public function store(Request $request)
     {
+        // Check this first so we don't save a message we can't deliver
+        $appInfo = AppInfo::first();
+        if (!$appInfo || !$appInfo->email) {
+            return response()->json([
+                'message' => "You can't send message at the moment, kindly contact Admin.",
+                'status' => 0,
+            ]);
+        }
+
         $data = Message::create([
             'name' => $request->name,
             'email' => $request->email,
@@ -72,15 +81,23 @@ class MessageController extends Controller
             'status' => $request->status,
         ]);
 
-        $appInfo = AppInfo::first();
-        if (!$appInfo && !$appInfo->email) {
-            return response()->json([
-                'message' => "You can't send message at the moment, kindly contact Admin.",
-                'status' => 0,
-            ]);
+        // Read from config (not env()), and drop empty values so a missing
+        // ADMIN_EMAIL can never put a null recipient into Mail::to()
+        $emails = array_values(array_filter(
+            (array) config('mail.admin_emails', []),
+            fn($email) => !empty($email)
+        ));
+
+        if (empty($emails)) {
+            Log::warning('Message saved but no admin email is configured (ADMIN_EMAIL / ADMIN_EMAIL2).');
+        } else {
+            try {
+                Mail::to($emails)->send(new MessageMail($data, $appInfo));
+            } catch (Throwable $e) {
+                // the message is already saved, so don't fail the visitor's request
+                Log::error('Message email failed to send', ['error' => $e->getMessage()]);
+            }
         }
-        $emails = [env('ADMIN_EMAIL'), env('ADMIN_EMAIL2')];
-        Mail::to($emails)->send(new MessageMail($data, $appInfo));
 
         return response()->json([
             'message' => 'Message Sent successffully.',
@@ -134,7 +151,7 @@ class MessageController extends Controller
         ]);
     }
 
-    public function delete($id)
+    public function delete(int|string $id)
     {
         $data = Message::find($id);
         if (!$data) {
